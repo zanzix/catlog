@@ -1,6 +1,6 @@
 {-# OPTIONS --postfix-projections #-}
 
-module Catlog where
+module Poset where
 
   open import Function.Base using (id; _∘_)
   open import Level using (0ℓ)
