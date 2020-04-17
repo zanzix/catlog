@@ -41,7 +41,7 @@ module Category where
     forget C ._⇒_ = C ._⇒_
     forget C ._≈_ = C ._≈_
 
-  module WithStuff (graph : Graph o ℓ e) where
+  module Ordinary (graph : Graph o ℓ e) where
     open Graph graph
 
     private
@@ -91,7 +91,7 @@ module Category where
 
   module _ {G : Graph o ℓ e} {C : Category o ℓ e} where
 
-    open WithStuff G
+    open Ordinary G
     open Graph G
     open Category C
 
@@ -125,3 +125,30 @@ module Category where
     lr F .act0 = F .F₀
     lr F .act1 e = F .F₁ (const e)
     lr F .resp fg = F .F-resp-≈ (const-cong fg)
+
+  module CutFree (graph : Graph o ℓ e) where
+    open Graph graph
+
+    private
+      variable
+        A B C D X : Obj
+
+    data _⊩_ : Rel Obj (o ⊔ ℓ) where
+      id : A ⊩ A
+      comp : X ⊩ A → (f : A ⇒ B) → X ⊩ B
+
+    open Ordinary graph
+
+    cut-intro : A ⊩ B → A ⊢ B
+    cut-intro id = init
+    cut-intro (comp d f) = cut (cut-intro d) (const f)
+
+    -- This is a version of list append (see also, Data.Star._◅◅_).
+    cut-admit : A ⊩ B → B ⊩ C → A ⊩ C
+    cut-admit d id = d
+    cut-admit d (comp e f) = comp (cut-admit d e) f
+
+    cut-elim : A ⊢ B → A ⊩ B
+    cut-elim (const f) = comp id f
+    cut-elim init = id
+    cut-elim (cut d e) = cut-admit (cut-elim d) (cut-elim e)
