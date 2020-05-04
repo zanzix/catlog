@@ -265,35 +265,31 @@ module Semilattice where
       data _sc⊢_ : (A B : Ty) → Set where
         init : ι X sc⊢ ι X
         fR : (f : G X Y) → A sc⊢ ι X → A sc⊢ ι Y
-        ruleL : ∀ {l} (i : l ∈ left c) (ds : All (λ j → As j sc⊢ B) l) → conn c As sc⊢ B
-        ruleR : ∀ {r} (i : r ∈ right c) (ds : All (λ j → A sc⊢ Bs j) r) → A sc⊢ conn c Bs
+        ruleL : ∀ {ps} (l-rule : ps ∈ left c) (ds : ∀ {p} → p ∈ ps → As p sc⊢ B) → conn c As sc⊢ B
+        ruleR : ∀ {ps} (r-rule : ps ∈ right c) (ds : ∀ {p} → p ∈ ps → A sc⊢ Bs p) → A sc⊢ conn c Bs
 
       init* : A sc⊢ A
       init* {ι x} = init
       init* {conn c As} = case polarity c of λ where
-        (+ve {l = l} q rs) → ruleL (≡.subst (l ∈_) q (here ≡.refl))
-                                   (All.map (λ j∈ → ruleR j∈ (init* ∷ [])) rs)
-        (-ve {r = r} q ls) → ruleR (≡.subst (r ∈_) q (here ≡.refl))
-                                   (All.map (λ j∈ → ruleL j∈ (init* ∷ [])) ls)
+        (+ve {l = ps} q rs) → ruleL (≡.subst (ps ∈_) q (here ≡.refl))
+                                    λ p∈ps → ruleR (All.lookup rs p∈ps)
+                                                   λ { (here ≡.refl) → init* }
+        (-ve {r = ps} q ls) → ruleR (≡.subst (ps ∈_) q (here ≡.refl))
+                                    λ p∈ps → ruleL (All.lookup ls p∈ps)
+                                                   λ { (here ≡.refl) → init* }
 
       cut-admitʳ : A sc⊢ B → B sc⊢ C → A sc⊢ C
-      all-cut-admitʳ : ∀ {js : List (Fin n)} Cs →
-        A sc⊢ B → All (λ j → B sc⊢ Cs j) js → All (λ j → A sc⊢ Cs j) js
       cut-admitʳ d init = d
       cut-admitʳ d (fR f e) = fR f (cut-admitʳ d e)
-      cut-admitʳ d (ruleL {c = c} {l = l} i es) = go d es
+      cut-admitʳ d (ruleL {c = c} {ps = ls} l-rule es) = go d es
         where
-        go : A sc⊢ conn c Bs → All (λ j → Bs j sc⊢ C) l → A sc⊢ C
-        all-go : ∀ {r} → All (λ j → As j sc⊢ conn c Bs) r → All (λ j → Bs j sc⊢ C) l → All (λ j → As j sc⊢ C) r
-        go (ruleL i′ ds) es = ruleL i′ (all-go ds es)
-        go {Bs = Bs} (ruleR i′ ds) es =
-          let j , j∈l , j∈r = principal i i′ in
-          cut-admitʳ {B = Bs j} (All.lookup ds j∈r) (All.lookup es j∈l)
-        all-go [] es = []
-        all-go (d ∷ ds) es = go d es ∷ all-go ds es
-      cut-admitʳ d (ruleR {Bs = Bs} i es) = ruleR i (all-cut-admitʳ Bs d es)
-      all-cut-admitʳ Cs d [] = []
-      all-cut-admitʳ Cs d (e ∷ es) = cut-admitʳ d e ∷ all-cut-admitʳ Cs d es
+        go : A sc⊢ conn c Bs → (∀ {p} → p ∈ ls → Bs p sc⊢ C) → A sc⊢ C
+        go (ruleL l-rule′ ds) es = ruleL l-rule′ (λ p∈ps → go (ds p∈ps) es)
+        go (ruleR {ps = rs} r-rule ds) es =
+          let p , p∈ls , p∈rs = principal l-rule r-rule in
+          cut-admitʳ (ds p∈rs) (es p∈ls)
+      cut-admitʳ d (ruleR r-rule es) =
+        ruleR r-rule (λ p∈ps → cut-admitʳ d (es p∈ps))
 
     module _ where
       open Desc hiding (+ve; -ve)
@@ -322,16 +318,18 @@ module Semilattice where
       t⊤ : Ty
       t⊤ = conn (here ≡.refl) λ()
       _t∧_ : (A B : Ty) → Ty
-      A t∧ B = conn (there (here ≡.refl)) λ { zero → A ; (suc _) → B }
+      A t∧ B = conn (there (here ≡.refl)) (V.lookup (A ∷ B ∷ []))
 
       ⊤R : A sc⊢ t⊤
-      ⊤R = ruleR (here ≡.refl) []
+      ⊤R = ruleR (here ≡.refl) λ()
       ∧L1 : A sc⊢ C → A t∧ B sc⊢ C
-      ∧L1 d = ruleL (here ≡.refl) (d ∷ [])
+      ∧L1 d = ruleL (here ≡.refl) λ { (here ≡.refl) → d }
       ∧L2 : B sc⊢ C → A t∧ B sc⊢ C
-      ∧L2 d = ruleL (there (here ≡.refl)) (d ∷ [])
+      ∧L2 d = ruleL (there (here ≡.refl)) λ { (here ≡.refl) → d }
       ∧R : A sc⊢ B → A sc⊢ C → A sc⊢ B t∧ C
-      ∧R d e = ruleR (here ≡.refl) (d ∷ e ∷ [])
+      ∧R d e = ruleR (here ≡.refl) λ where
+        (here ≡.refl) → d
+        (there (here ≡.refl)) → e
 
       example : A t∧ B sc⊢ B t∧ A
       example = ∧R (∧L2 init*) (∧L1 init*)
