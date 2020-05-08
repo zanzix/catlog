@@ -5,15 +5,17 @@ module Semilattice where
   open import Function.Base using (id; _∘_; case_of_)
   open import Level using (0ℓ)
   open import Relation.Binary using (Rel; REL; Reflexive; Transitive)
-  open import Relation.Binary.PropositionalEquality as ≡ using (_≡_)
+  open import Relation.Binary.PropositionalEquality as ≡
+    using (_≡_; inspect; [_])
 
   open import Data.Fin using (Fin; zero; suc; #_)
-  open import Data.List as L
+  open import Data.List as L hiding ([_])
   open import Data.List.Membership.Propositional as ∈
+  open import Data.List.Membership.Propositional.Properties as ∈P
   open import Data.List.Relation.Unary.All as All
   open import Data.List.Relation.Unary.Any as Any
   open import Data.Nat using (ℕ; zero; suc)
-  open import Data.Product
+  open import Data.Product as ×
   open import Data.Sum using (_⊎_; inj₁; inj₂)
   open import Data.Vec as V using (Vec; []; _∷_; toList)
 
@@ -203,6 +205,13 @@ module Semilattice where
     cut-elim-sc ∧E2 = ∧L2 init*
     cut-elim-sc (∧I d e) = ∧R (cut-elim-sc d) (cut-elim-sc e)
 
+  data Polarity : Set where
+    +ve -ve : Polarity
+
+  negate : Polarity → Polarity
+  negate +ve = -ve
+  negate -ve = +ve
+
   module SequentCalculus2 (relGr : RelGr) where
     open RelGr relGr renaming (Carrier to I; rel to G)
 
@@ -215,23 +224,29 @@ module Semilattice where
         ι : I → Ty
         conn : ∀ {n} (c : Conn n) (As : Fin n → Ty) → Ty
 
-    module DescStuff2 (arities : List ℕ) (open DescStuff arities)
-                     (left right : ∀ {n} → Conn n → List (List (Fin n))) where
-      data Polarity {n} (c : Conn n) : Set where
-        +ve : ∀ {l} (q : (l ∷ []) ≡ left c) (rs : All (λ j → (j ∷ []) ∈ right c) l) → Polarity c
-        -ve : ∀ {r} (q : (r ∷ []) ≡ right c) (ls : All (λ j → (j ∷ []) ∈ left c) r) → Polarity c
+      private
+        left′ right′ :
+          ∀ {n} → Polarity → List (Fin n) → List (List (Fin n))
+        left′ +ve hyps = hyps ∷ []
+        left′ -ve hyps = L.map (_∷ []) hyps
+        right′ = left′ ∘ negate
+
+      record Connective {n} (c : Conn n) : Set where
+        field
+          polarity : Polarity
+          hyps : List (Fin n)
+
+        left right : List (List (Fin n))
+        left = left′ polarity hyps
+        right = right′ polarity hyps
 
     record Desc : Set₁ where
       field
         arities : List ℕ
       open DescStuff arities public
       field
-        left : ∀ {n} → Conn n → List (List (Fin n))
-        right : ∀ {n} → Conn n → List (List (Fin n))
-      open DescStuff2 arities left right public
-      field
-        polarity : ∀ {n} (c : Conn n) → Polarity c
-        principal : ∀ {n l r} {c : Conn n} → l ∈ left c → r ∈ right c → ∃ \ j → j ∈ l × j ∈ r
+        conns : ∀ {n} (c : Conn n) → Connective c
+      open module Conns {n} (c : Conn n) = Connective (conns c) public
 
     {-
     A ⊢ B   A ⊢ C         A   ⊢ C          B   ⊢ C
@@ -265,49 +280,62 @@ module Semilattice where
       data _sc⊢_ : (A B : Ty) → Set where
         init : ι X sc⊢ ι X
         fR : (f : G X Y) → A sc⊢ ι X → A sc⊢ ι Y
-        ruleL : ∀ {ps} (l-rule : ps ∈ left c) (ds : ∀ {p} → p ∈ ps → As p sc⊢ B) → conn c As sc⊢ B
-        ruleR : ∀ {ps} (r-rule : ps ∈ right c) (ds : ∀ {p} → p ∈ ps → A sc⊢ Bs p) → A sc⊢ conn c Bs
+        ruleL : ∀ {hs} (l-rule : hs ∈ left c)
+                (ds : ∀ {h} → h ∈ hs → As h sc⊢ B) → conn c As sc⊢ B
+        ruleR : ∀ {hs} (r-rule : hs ∈ right c)
+                (ds : ∀ {h} → h ∈ hs → A sc⊢ Bs h) → A sc⊢ conn c Bs
 
       init* : A sc⊢ A
-      init* {ι x} = init
-      init* {conn c As} = case polarity c of λ where
-        (+ve {l = ps} q rs) → ruleL (≡.subst (ps ∈_) q (here ≡.refl))
-                                    λ p∈ps → ruleR (All.lookup rs p∈ps)
-                                                   λ { (here ≡.refl) → init* }
-        (-ve {r = ps} q ls) → ruleR (≡.subst (ps ∈_) q (here ≡.refl))
-                                    λ p∈ps → ruleL (All.lookup ls p∈ps)
-                                                   λ { (here ≡.refl) → init* }
+      init* {ι X} = init
+      init* {conn c As} with polarity c | inspect polarity c
+      ... | +ve | [ q ] =
+        ruleL hs∈lss λ h∈hs → ruleR ([h]∈rss h∈hs) λ { (here ≡.refl) → init* }
+        where
+        hs∈lss : hyps c ∈ left c
+        hs∈lss rewrite q = here ≡.refl
+
+        [h]∈rss : ∀ {h} → h ∈ hyps c → h ∷ [] ∈ right c
+        [h]∈rss h∈hs rewrite q = ∈-map⁺ _ h∈hs
+      ... | -ve | [ q ] =
+        ruleR hs∈rss λ h∈hs → ruleL ([h]∈lss h∈hs) λ { (here ≡.refl) → init* }
+        where
+        hs∈rss : hyps c ∈ right c
+        hs∈rss rewrite q = here ≡.refl
+
+        [h]∈lss : ∀ {h} → h ∈ hyps c → h ∷ [] ∈ left c
+        [h]∈lss h∈hs rewrite q = ∈-map⁺ _ h∈hs
 
       cut-admitʳ : A sc⊢ B → B sc⊢ C → A sc⊢ C
       cut-admitʳ d init = d
       cut-admitʳ d (fR f e) = fR f (cut-admitʳ d e)
-      cut-admitʳ d (ruleL {c = c} {ps = ls} l-rule es) = go d es
+      cut-admitʳ d (ruleL {c = c} {hs = ls} l-rule es) = go d es
         where
         go : A sc⊢ conn c Bs → (∀ {p} → p ∈ ls → Bs p sc⊢ C) → A sc⊢ C
-        go (ruleL l-rule′ ds) es = ruleL l-rule′ (λ p∈ps → go (ds p∈ps) es)
-        go (ruleR {ps = rs} r-rule ds) es =
-          let p , p∈ls , p∈rs = principal l-rule r-rule in
-          cut-admitʳ (ds p∈rs) (es p∈ls)
-      cut-admitʳ d (ruleR r-rule es) =
-        ruleR r-rule (λ p∈ps → cut-admitʳ d (es p∈ps))
+        go (ruleL l-rule′ ds) es = ruleL l-rule′ (λ h∈hs → go (ds h∈hs) es)
+        go (ruleR {hs = rs} r-rule ds) es =
+          let h , h∈ls , h∈rs = stuff l-rule r-rule in
+          cut-admitʳ (ds h∈rs) (es h∈ls)
+          where
+          stuff : ls ∈ left c → rs ∈ right c → ∃ \ h → h ∈ ls × h ∈ rs
+          stuff l-rule r-rule with polarity c
+          stuff (here ≡.refl) r-rule | +ve =
+            ×.map id (λ { (h∈hs , ≡.refl) → h∈hs , here ≡.refl })
+                  (∈-map⁻ _ r-rule)
+          stuff l-rule (here ≡.refl) | -ve =
+            ×.map id (λ { (h∈hs , ≡.refl) → here ≡.refl , h∈hs })
+                  (∈-map⁻ _ l-rule)
+      cut-admitʳ d (ruleR r-rule ds) = ruleR r-rule (λ z → cut-admitʳ d (ds z))
 
     module _ where
-      open Desc hiding (+ve; -ve)
-      open DescStuff2 using (+ve; -ve)
+      open Desc
+      open Connective
 
       desc : Desc
       desc .arities = 0 ∷ 2 ∷ []
-      desc .left (here ≡.refl) = []
-      desc .left (there (here ≡.refl)) = (# 0 ∷ []) ∷ (# 1 ∷ []) ∷ []
-      desc .right (here ≡.refl) = [] ∷ []
-      desc .right (there (here ≡.refl)) = (# 0 ∷ # 1 ∷ []) ∷ []
-      desc .polarity (here ≡.refl) = -ve ≡.refl []
-      desc .polarity (there (here ≡.refl)) = -ve ≡.refl (here ≡.refl ∷ there (here ≡.refl) ∷ [])
-      desc .principal {c = here ≡.refl} () k
-      desc .principal {c = there (here ≡.refl)} (here ≡.refl) (here ≡.refl) =
-        # 0 , here ≡.refl , here ≡.refl
-      desc .principal {c = there (here ≡.refl)} (there (here ≡.refl)) (here ≡.refl) =
-        # 1 , here ≡.refl , there (here ≡.refl)
+      desc .conns (here ≡.refl) .polarity = -ve
+      desc .conns (here ≡.refl) .hyps = []
+      desc .conns (there (here ≡.refl)) .polarity = -ve
+      desc .conns (there (here ≡.refl)) .hyps = allFin _
 
     module _ where
       open Desc desc
